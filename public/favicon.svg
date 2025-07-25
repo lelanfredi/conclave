@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect width="32" height="32" fill="#8B4513" rx="2"/>
+  
+  <!-- Church base -->
+  <rect x="8" y="18" width="16" height="10" fill="#D2691E"/>
+  
+  <!-- Church roof -->
+  <polygon points="8,18 16,12 24,18" fill="#A0522D"/>
+  
+  <!-- Bell tower -->
+  <rect x="13" y="8" width="6" height="10" fill="#D2691E"/>
+  <polygon points="13,8 16,5 19,8" fill="#A0522D"/>
+  
+  <!-- Cross on top -->
+  <rect x="15.5" y="3" width="1" height="4" fill="#FFD700"/>
+  <rect x="14" y="4.5" width="4" height="1" fill="#FFD700"/>
+  
+  <!-- Church door -->
+  <rect x="14" y="22" width="4" height="6" fill="#8B4513" rx="2"/>
+  
+  <!-- Windows -->
+  <rect x="10" y="20" width="2" height="3" fill="#4169E1" rx="1"/>
+  <rect x="20" y="20" width="2" height="3" fill="#4169E1" rx="1"/>
+  
+  <!-- Bell tower window -->
+  <rect x="15" y="12" width="2" height="2" fill="#4169E1" rx="1"/>
+</svg>
