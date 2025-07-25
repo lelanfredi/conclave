@@ -768,6 +768,61 @@ const VotingArea = ({
     window.location.href = "/";
   };
 
+  const handleRemoveParticipant = async (participantId: string) => {
+    if (!confirm("Tem certeza que deseja remover este participante?")) {
+      return;
+    }
+
+    try {
+      if (supabase) {
+        // Remove participant from database
+        const { error } = await supabase
+          .from("participants")
+          .delete()
+          .eq("id", participantId);
+
+        if (error) throw error;
+
+        // Also remove any votes from this participant
+        await supabase
+          .from("votes")
+          .delete()
+          .eq("participant_id", participantId);
+
+        console.log("Participant removed successfully");
+      } else {
+        // Fallback to localStorage
+        const storedParticipants = localStorage.getItem("participants");
+        if (storedParticipants) {
+          const participants = JSON.parse(storedParticipants);
+          const filteredParticipants = participants.filter(
+            (p: any) => p.id !== participantId,
+          );
+          localStorage.setItem(
+            "participants",
+            JSON.stringify(filteredParticipants),
+          );
+        }
+
+        // Remove votes from this participant
+        const storedVotes = localStorage.getItem("votes");
+        if (storedVotes) {
+          const votes = JSON.parse(storedVotes);
+          const filteredVotes = votes.filter(
+            (v: any) => v.participant_id !== participantId,
+          );
+          localStorage.setItem("votes", JSON.stringify(filteredVotes));
+        }
+      }
+
+      // Reload data to reflect changes
+      await loadData();
+    } catch (error) {
+      console.error("Error removing participant:", error);
+      alert("Erro ao remover participante. Tente novamente.");
+    }
+  };
+
   const toggleResults = () => {
     setShowResults(!showResults);
   };
@@ -940,7 +995,7 @@ const VotingArea = ({
               >
                 <div className="text-8xl mb-4">☁️</div>
                 <h1 className="text-6xl font-bold text-orange-800 mb-4">
-                  HABEMUS PAPA CAIPIRA!
+                  HABEMUS PAPA DO ARRAIÁ!
                 </h1>
                 <h2 className="text-4xl text-orange-600 mb-8">{winner.name}</h2>
                 <div className="flex justify-center gap-4 text-6xl">
@@ -1159,6 +1214,56 @@ const VotingArea = ({
                   </div>
                 )}
             </div>
+
+            {/* Participant Management Section */}
+            <div className="space-y-3">
+              <h3 className="font-semibold text-sm text-red-800">
+                Gerenciar Participantes ({participants.length})
+              </h3>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {participants.length === 0 ? (
+                  <div className="text-center py-4">
+                    <p className="text-xs text-gray-500">
+                      Nenhum participante registrado
+                    </p>
+                  </div>
+                ) : (
+                  participants.map((participant) => (
+                    <div
+                      key={participant.id}
+                      className="flex items-center justify-between p-2 bg-white rounded border"
+                    >
+                      <div className="flex items-center gap-2">
+                        <img
+                          src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${participant.cardinal_name.replace(/\s+/g, "")}`}
+                          alt={participant.cardinal_name}
+                          className="w-6 h-6 rounded-full"
+                        />
+                        <div>
+                          <span className="text-xs font-medium">
+                            {participant.cardinal_name
+                              .split(" ")
+                              .slice(0, 2)
+                              .join(" ")}
+                          </span>
+                          <p className="text-xs text-gray-500">
+                            {participant.real_name}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleRemoveParticipant(participant.id)}
+                        className="text-xs h-6 px-2"
+                      >
+                        Remover
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -1307,7 +1412,7 @@ const VotingArea = ({
           <CardHeader className="pb-3 text-center">
             <CardTitle className="text-lg text-orange-800 flex items-center justify-center gap-2">
               <Crown className="text-yellow-600 h-5 w-5" />
-              Vote para Papa Caipira
+              Vote para Papa do Arraiá
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">

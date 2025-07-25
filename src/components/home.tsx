@@ -60,7 +60,7 @@ const Home = () => {
               CONCLAVE JUNINO
             </CardTitle>
             <p className="text-sm text-gray-600 mt-1">
-              Eleição do Papa Caipira 2024
+              Eleição do Papa do Arraiá 2025
             </p>
           </CardHeader>
 

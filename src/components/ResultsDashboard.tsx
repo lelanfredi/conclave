@@ -131,7 +131,7 @@ const ResultsDashboard = ({
                 <h3
                   className={`${isTvMode ? "text-6xl" : "text-3xl"} font-bold ${isTvMode ? "text-yellow-100" : "text-yellow-800"}`}
                 >
-                  HABEMUS PAPA CAIPIRA!
+                  HABEMUS PAPA DO ARRAIÁ!
                 </h3>
                 <h4
                   className={`${isTvMode ? "text-4xl" : "text-2xl"} font-bold ${isTvMode ? "text-white" : "text-orange-700"} mt-2`}
@@ -276,10 +276,10 @@ const ResultsDashboard = ({
       {isTvMode && (
         <div className="mt-8 text-center">
           <p className="text-2xl text-orange-200">
-            🎪 Festa Junina 2024 • Conclave Junino 🎪
+            🎪 Festa Junina 2025 • Conclave Junino 🎪
           </p>
           <p className="text-lg text-orange-300 mt-2">
-            "Habemus Papa Caipira!"
+            "Habemus Papa do Arraiá!"
           </p>
         </div>
       )}
