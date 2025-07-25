@@ -20,6 +20,7 @@ import {
   Bell,
   Award,
   Zap,
+  Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ResultsDashboard from "./ResultsDashboard";
@@ -32,6 +33,15 @@ import {
 } from "@/lib/supabase";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Candidate {
   id: string;
@@ -93,11 +103,23 @@ const VotingArea = ({
   const [showSanctionInputs, setShowSanctionInputs] = useState<
     Record<string, boolean>
   >({});
+  const [isAdminAuthenticated, setIsAdminAuthenticated] =
+    useState<boolean>(false);
+  const [showPasswordDialog, setShowPasswordDialog] = useState<boolean>(false);
+  const [passwordInput, setPasswordInput] = useState<string>("");
+  const [passwordError, setPasswordError] = useState<string>("");
 
   // Load initial data
   useEffect(() => {
     loadData();
   }, []);
+
+  // Check admin authentication on mount
+  useEffect(() => {
+    if (isAdmin && !isAdminAuthenticated) {
+      setShowPasswordDialog(true);
+    }
+  }, [isAdmin, isAdminAuthenticated]);
 
   // Real-time synchronization with Supabase
   useEffect(() => {
@@ -726,6 +748,26 @@ const VotingArea = ({
     }));
   };
 
+  const handlePasswordSubmit = () => {
+    if (passwordInput === "loverson") {
+      setIsAdminAuthenticated(true);
+      setShowPasswordDialog(false);
+      setPasswordInput("");
+      setPasswordError("");
+    } else {
+      setPasswordError("Senha incorreta. Tente novamente.");
+      setPasswordInput("");
+    }
+  };
+
+  const handlePasswordCancel = () => {
+    setShowPasswordDialog(false);
+    setPasswordInput("");
+    setPasswordError("");
+    // Redirect to home if not authenticated
+    window.location.href = "/";
+  };
+
   const toggleResults = () => {
     setShowResults(!showResults);
   };
@@ -803,6 +845,58 @@ const VotingArea = ({
 
   return (
     <div className="w-full max-w-md mx-auto p-4 bg-white min-h-screen">
+      {/* Password Dialog */}
+      <Dialog open={showPasswordDialog} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-5 w-5 text-red-600" />
+              Acesso Administrativo
+            </DialogTitle>
+            <DialogDescription>
+              Digite a senha para acessar o painel administrativo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="password">Senha</Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Digite a senha..."
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter") {
+                    handlePasswordSubmit();
+                  }
+                }}
+                className="h-12"
+              />
+            </div>
+            {passwordError && (
+              <div className="text-sm text-red-600 bg-red-50 p-2 rounded border border-red-200">
+                {passwordError}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handlePasswordCancel}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handlePasswordSubmit}
+              className="flex-1 bg-red-600 hover:bg-red-700"
+            >
+              Entrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {/* Bell Animation */}
       <AnimatePresence>
         {showBellAnimation && (
@@ -926,7 +1020,7 @@ const VotingArea = ({
         )}
       </div>
 
-      {isAdmin && (
+      {isAdmin && isAdminAuthenticated && (
         <Card className="mb-6 border border-red-300 shadow-sm">
           <CardHeader className="pb-3 bg-red-600 text-white">
             <CardTitle className="text-lg flex items-center gap-2">

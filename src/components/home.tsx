@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import VotingArea from "./VotingArea";
 import { Crown, Church, ExternalLink } from "lucide-react";
 
@@ -35,20 +36,20 @@ const Home = () => {
           <CardHeader className="text-center pb-4">
             <div className="mb-3">
               <div className="flex justify-center gap-4 mb-2">
-                <a
-                  href="/tv"
+                <Link
+                  to="/tv"
                   className="text-xs text-orange-600 hover:text-orange-800 flex items-center gap-1"
                 >
                   📺 resultados
                   <ExternalLink className="h-3 w-3" />
-                </a>
-                <a
-                  href="/admin"
+                </Link>
+                <Link
+                  to="/admin"
                   className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1"
                 >
-                  ⚙️ admin
+                  🔒 admin
                   <ExternalLink className="h-3 w-3" />
-                </a>
+                </Link>
               </div>
               <div className="flex items-center justify-center gap-2">
                 <Church className="h-6 w-6 text-orange-600" />
