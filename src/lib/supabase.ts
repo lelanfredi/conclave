@@ -67,8 +67,6 @@ export interface VotingSession {
 
 export interface Sanction {
   id: string;
-  candidate_id: string;
-  candidate_name: string;
   message: string;
   round: number;
   applied_by: string;

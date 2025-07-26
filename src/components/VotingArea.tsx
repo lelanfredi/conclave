@@ -97,12 +97,8 @@ const VotingArea = ({
   );
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [sanctions, setSanctions] = useState<Sanction[]>([]);
-  const [sanctionMessages, setSanctionMessages] = useState<
-    Record<string, string>
-  >({});
-  const [showSanctionInputs, setShowSanctionInputs] = useState<
-    Record<string, boolean>
-  >({});
+  const [sanctionMessage, setSanctionMessage] = useState<string>("");
+  const [showSanctionInput, setShowSanctionInput] = useState<boolean>(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] =
     useState<boolean>(false);
   const [showPasswordDialog, setShowPasswordDialog] = useState<boolean>(false);
@@ -137,9 +133,32 @@ const VotingArea = ({
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "voting_sessions" },
-          () => {
-            console.log("Voting session updated, reloading data...");
-            loadData();
+          (payload) => {
+            console.log("Voting session updated:", payload);
+            // Force immediate state update for round activation
+            if (
+              payload.new &&
+              payload.new.round_active !== payload.old?.round_active
+            ) {
+              console.log("Round status changed, forcing immediate update...");
+              console.log("New session state:", payload.new);
+
+              // Update session immediately
+              setVotingSession(payload.new);
+
+              // Reset voting state when round becomes active
+              if (payload.new.round_active) {
+                console.log("Round activated - resetting participant state");
+                setHasVoted(false);
+                setSelectedCandidate(null);
+                setShowParticipantsList(false);
+                setShowResults(false);
+                setShowBellAnimation(true);
+                setTimeout(() => setShowBellAnimation(false), 3000);
+              }
+            }
+            // Always reload data after session changes
+            setTimeout(() => loadData(), 100);
           },
         )
         .on(
@@ -150,19 +169,35 @@ const VotingArea = ({
             loadData();
           },
         )
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "sanctions" },
-          () => {
-            console.log("Sanctions updated, reloading data...");
-            loadData();
-          },
-        )
         .subscribe();
 
       return () => {
         supabase.removeChannel(votingChannel);
       };
+    } else {
+      // Fallback polling for localStorage mode
+      const interval = setInterval(() => {
+        const storedSession = localStorage.getItem("votingSession");
+        if (storedSession) {
+          const sessionData = JSON.parse(storedSession);
+          if (sessionData.round_active !== votingSession?.round_active) {
+            console.log("LocalStorage: Round status changed, updating...");
+            setVotingSession(sessionData);
+            if (sessionData.round_active) {
+              console.log("LocalStorage: Round activated - resetting state");
+              setHasVoted(false);
+              setSelectedCandidate(null);
+              setShowParticipantsList(false);
+              setShowResults(false);
+              setShowBellAnimation(true);
+              setTimeout(() => setShowBellAnimation(false), 3000);
+            }
+          }
+        }
+        loadData();
+      }, 1000);
+
+      return () => clearInterval(interval);
     }
   }, []);
 
@@ -255,16 +290,25 @@ const VotingArea = ({
           console.error("Error loading voting session:", sessionError);
         }
 
-        // Load sanctions for current round
+        // Load sanctions for current round (with simplified error handling)
         if (sessionData) {
-          const { data: sanctionsData } = await supabase
-            .from("sanctions")
-            .select("*")
-            .eq("round", sessionData.current_round)
-            .order("created_at", { ascending: false });
+          try {
+            const { data: sanctionsData, error: sanctionsError } =
+              await supabase
+                .from("sanctions")
+                .select("*")
+                .eq("round", sessionData.current_round)
+                .order("created_at", { ascending: false });
 
-          if (sanctionsData) {
-            setSanctions(sanctionsData);
+            if (sanctionsError) {
+              console.warn("Sanctions table not available, using empty array");
+              setSanctions([]);
+            } else {
+              setSanctions(sanctionsData || []);
+            }
+          } catch (error) {
+            console.warn("Error loading sanctions:", error);
+            setSanctions([]);
           }
         }
 
@@ -502,15 +546,19 @@ const VotingArea = ({
 
   const handleStartNewRound = async () => {
     try {
+      console.log("Starting new round...", votingSession?.current_round);
+
       if (supabase && votingSession) {
         // Update voting session to start the round
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("voting_sessions")
           .update({
             round_active: true,
             updated_at: new Date().toISOString(),
           })
-          .eq("id", votingSession.id);
+          .eq("id", votingSession.id)
+          .select()
+          .single();
 
         if (error) throw error;
 
@@ -522,7 +570,11 @@ const VotingArea = ({
 
         console.log(
           `Round ${votingSession.current_round} started successfully`,
+          data,
         );
+
+        // Immediately update local state
+        setVotingSession(data);
       } else {
         // Fallback to localStorage
         if (votingSession) {
@@ -531,6 +583,7 @@ const VotingArea = ({
             round_active: true,
             updated_at: new Date().toISOString(),
           };
+          console.log("LocalStorage: Starting round", updatedSession);
           setVotingSession(updatedSession);
           localStorage.setItem("votingSession", JSON.stringify(updatedSession));
 
@@ -544,15 +597,25 @@ const VotingArea = ({
         }
       }
 
+      // Reset UI state immediately for all users
+      setHasVoted(false);
+      setSelectedCandidate(null);
+      setShowResults(false);
+
+      // For participants, hide participants list and prepare for voting
+      if (!isAdmin) {
+        setShowParticipantsList(false);
+      }
+
+      setShowBellAnimation(true);
+      setTimeout(() => setShowBellAnimation(false), 3000);
+
       // Reload data to reflect changes
       await loadData();
 
       onStartRound();
-      setHasVoted(false);
-      setSelectedCandidate(null);
-      setShowParticipantsList(false);
-      setShowBellAnimation(true);
-      setTimeout(() => setShowBellAnimation(false), 3000);
+
+      console.log("✅ Round started successfully, UI state updated");
     } catch (error) {
       console.error("Error starting round:", error);
     }
@@ -678,19 +741,16 @@ const VotingArea = ({
     }
   };
 
-  const handleApplySanction = async (candidateId: string, message: string) => {
+  const handleApplySanction = async (message: string) => {
     if (!message.trim()) {
       alert("Por favor, insira uma mensagem para a sanção.");
       return;
     }
 
     try {
-      const candidate = candidates.find((c) => c.id === candidateId);
-      if (!candidate || !votingSession) return;
+      if (!votingSession) return;
 
       const sanctionData = {
-        candidate_id: candidateId,
-        candidate_name: candidate.name,
         message: message.trim(),
         round: votingSession.current_round,
         applied_by: "Admin",
@@ -699,7 +759,33 @@ const VotingArea = ({
       if (supabase) {
         const { error } = await supabase.from("sanctions").insert(sanctionData);
 
-        if (error) throw error;
+        if (error) {
+          console.warn(
+            "Sanctions table not available, using localStorage fallback",
+          );
+
+          // Fallback to localStorage if sanctions table doesn't exist
+          const newSanction = {
+            ...sanctionData,
+            id: Date.now().toString(),
+            created_at: new Date().toISOString(),
+          };
+
+          const storedSanctions = localStorage.getItem("sanctions");
+          const sanctions = storedSanctions ? JSON.parse(storedSanctions) : [];
+          sanctions.push(newSanction);
+          localStorage.setItem("sanctions", JSON.stringify(sanctions));
+
+          // Update local state immediately
+          setSanctions((prev) => [...prev, newSanction]);
+
+          // Clear the input and hide it
+          setSanctionMessage("");
+          setShowSanctionInput(false);
+
+          alert("Sanção aplicada com sucesso! (Salva localmente)");
+          return;
+        }
       } else {
         // Fallback to localStorage
         const newSanction = {
@@ -714,38 +800,26 @@ const VotingArea = ({
         localStorage.setItem("sanctions", JSON.stringify(sanctions));
       }
 
-      // Update local state
-      const updatedCandidates = candidates.map((c) =>
-        c.id === candidateId ? { ...c, eliminated: true } : c,
-      );
-      setCandidates(updatedCandidates);
-
       // Clear the input and hide it
-      setSanctionMessages((prev) => ({ ...prev, [candidateId]: "" }));
-      setShowSanctionInputs((prev) => ({ ...prev, [candidateId]: false }));
+      setSanctionMessage("");
+      setShowSanctionInput(false);
 
       // Reload data to get updated sanctions
       await loadData();
 
-      onEliminateCandidate(candidateId);
+      alert("Sanção aplicada para toda a rodada!");
     } catch (error) {
       console.error("Error applying sanction:", error);
       alert("Erro ao aplicar sanção. Tente novamente.");
     }
   };
 
-  const toggleSanctionInput = (candidateId: string) => {
-    setShowSanctionInputs((prev) => ({
-      ...prev,
-      [candidateId]: !prev[candidateId],
-    }));
+  const toggleSanctionInput = () => {
+    setShowSanctionInput(!showSanctionInput);
   };
 
-  const updateSanctionMessage = (candidateId: string, message: string) => {
-    setSanctionMessages((prev) => ({
-      ...prev,
-      [candidateId]: message,
-    }));
+  const updateSanctionMessage = (message: string) => {
+    setSanctionMessage(message);
   };
 
   const handlePasswordSubmit = () => {
@@ -769,45 +843,37 @@ const VotingArea = ({
   };
 
   const handleRemoveParticipant = async (participantId: string) => {
-    console.log("Attempting to remove participant:", participantId);
-
     if (!confirm("Tem certeza que deseja remover este participante?")) {
-      console.log("User cancelled removal");
+      return;
+    }
+
+    const participantToRemove = participants.find(
+      (p) => p.id === participantId,
+    );
+    if (!participantToRemove) {
+      alert("Participante não encontrado!");
       return;
     }
 
     try {
       if (supabase) {
-        console.log("Using Supabase to remove participant");
-
-        // First, remove any votes from this participant
-        const { error: votesError } = await supabase
+        // Remove votes first
+        await supabase
           .from("votes")
           .delete()
           .eq("participant_id", participantId);
 
-        if (votesError) {
-          console.error("Error removing participant votes:", votesError);
-        } else {
-          console.log("Participant votes removed successfully");
-        }
-
-        // Then remove participant from database
-        const { error: participantError } = await supabase
+        // Remove participant
+        const { error } = await supabase
           .from("participants")
           .delete()
           .eq("id", participantId);
 
-        if (participantError) {
-          console.error("Error removing participant:", participantError);
-          throw participantError;
+        if (error) {
+          throw new Error(`Erro do Supabase: ${error.message}`);
         }
-
-        console.log("Participant removed successfully from Supabase");
       } else {
-        console.log("Using localStorage to remove participant");
-
-        // Fallback to localStorage
+        // Remove from localStorage
         const storedParticipants = localStorage.getItem("participants");
         if (storedParticipants) {
           const participants = JSON.parse(storedParticipants);
@@ -818,10 +884,9 @@ const VotingArea = ({
             "participants",
             JSON.stringify(filteredParticipants),
           );
-          console.log("Participant removed from localStorage");
         }
 
-        // Remove votes from this participant
+        // Remove votes from localStorage
         const storedVotes = localStorage.getItem("votes");
         if (storedVotes) {
           const votes = JSON.parse(storedVotes);
@@ -829,20 +894,15 @@ const VotingArea = ({
             (v: any) => v.participant_id !== participantId,
           );
           localStorage.setItem("votes", JSON.stringify(filteredVotes));
-          console.log("Participant votes removed from localStorage");
         }
       }
 
       // Reload data to reflect changes
-      console.log("Reloading data after participant removal");
       await loadData();
-
       alert("Participante removido com sucesso!");
     } catch (error) {
       console.error("Error removing participant:", error);
-      alert(
-        `Erro ao remover participante: ${error.message || error}. Verifique o console para mais detalhes.`,
-      );
+      alert(`Erro ao remover participante: ${error.message || error}`);
     }
   };
 
@@ -904,6 +964,72 @@ const VotingArea = ({
     // Always try to auto-register, even if participants list is empty initially
     autoRegister();
   }, [realName, nickname, participants]);
+
+  // Auto-redirect to voting when round becomes active
+  useEffect(() => {
+    console.log("Round active check:", {
+      actualRoundActive,
+      hasVoted,
+      currentUserId,
+      isAdmin,
+      showParticipantsList,
+      showResults,
+    });
+
+    if (actualRoundActive && !hasVoted && currentUserId && !isAdmin) {
+      console.log("✅ Redirecting participant to voting screen...");
+      // Hide participants list and show voting interface
+      setShowParticipantsList(false);
+      setShowResults(false);
+      // Reset selected candidate for new round
+      setSelectedCandidate(null);
+    } else if (!actualRoundActive && !isAdmin) {
+      console.log("Round not active - showing participants list");
+      setShowParticipantsList(true);
+    }
+  }, [actualRoundActive, hasVoted, currentUserId, isAdmin]);
+
+  // Force UI update when voting session changes
+  useEffect(() => {
+    if (votingSession) {
+      console.log("🔄 Voting session state changed:", {
+        round_active: votingSession.round_active,
+        current_round: votingSession.current_round,
+        hasVoted,
+        currentUserId,
+        isAdmin,
+        updated_at: votingSession.updated_at,
+      });
+
+      // Update local state based on session
+      const sessionRoundActive = votingSession.round_active;
+
+      // If round just became active, ensure proper UI state for participants
+      if (sessionRoundActive && !hasVoted && currentUserId && !isAdmin) {
+        console.log("🎯 Session active: redirecting participant to voting...");
+        setShowParticipantsList(false);
+        setShowResults(false);
+        setSelectedCandidate(null);
+      }
+
+      // If round is not active, reset voting state for next round
+      if (!sessionRoundActive && !isAdmin) {
+        console.log("⏸️ Session inactive: resetting voting state...");
+        setHasVoted(false);
+        setSelectedCandidate(null);
+        // Show participants list when round is not active
+        if (!showResults) {
+          setShowParticipantsList(true);
+        }
+      }
+    }
+  }, [
+    votingSession?.round_active,
+    votingSession?.current_round,
+    votingSession?.updated_at,
+    currentUserId,
+    isAdmin,
+  ]);
 
   if (loading) {
     return (
@@ -1157,82 +1283,60 @@ const VotingArea = ({
                 !sessionEnded && (
                   <div className="space-y-3">
                     <h3 className="font-semibold text-sm text-red-800">
-                      Aplicar Sanções
+                      Aplicar Sanção à Rodada
                     </h3>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {candidates
-                        .filter((candidate) => !candidate.eliminated)
-                        .map((candidate) => (
-                          <div
-                            key={candidate.id}
-                            className="flex items-center justify-between p-2 bg-white rounded border"
-                          >
-                            <div className="flex items-center gap-2">
-                              <img
-                                src={candidate.image}
-                                alt={candidate.name}
-                                className="w-6 h-6 rounded-full"
-                              />
-                              <div>
-                                <span className="text-xs font-medium">
-                                  {candidate.name
-                                    .split(" ")
-                                    .slice(0, 2)
-                                    .join(" ")}
-                                </span>
-                                <p className="text-xs text-gray-500">
-                                  {candidate.votes} votos
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <Button
-                                size="sm"
-                                variant={
-                                  showSanctionInputs[candidate.id]
-                                    ? "outline"
-                                    : "destructive"
-                                }
-                                onClick={() =>
-                                  toggleSanctionInput(candidate.id)
-                                }
-                                className="text-xs h-6 px-2"
-                              >
-                                {showSanctionInputs[candidate.id]
-                                  ? "Cancelar"
-                                  : "Sancionar"}
-                              </Button>
-                              {showSanctionInputs[candidate.id] && (
-                                <div className="mt-2 space-y-2">
-                                  <Textarea
-                                    placeholder="Motivo da sanção..."
-                                    value={sanctionMessages[candidate.id] || ""}
-                                    onChange={(e) =>
-                                      updateSanctionMessage(
-                                        candidate.id,
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="text-xs h-16 resize-none"
-                                  />
-                                  <Button
-                                    size="sm"
-                                    variant="destructive"
-                                    onClick={() =>
-                                      handleApplySanction(
-                                        candidate.id,
-                                        sanctionMessages[candidate.id] || "",
-                                      )
-                                    }
-                                    className="text-xs h-6 px-2 w-full"
-                                  >
-                                    Confirmar Sanção
-                                  </Button>
-                                </div>
-                              )}
-                            </div>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-orange-50 rounded border border-orange-200">
+                        <p className="text-xs text-orange-800 mb-2">
+                          ⚠️ A sanção será aplicada a todos os participantes
+                          desta rodada
+                        </p>
+                        <div className="flex items-center gap-2 text-xs text-orange-600">
+                          <span>👥 {participants.length} participantes</span>
+                          <span>•</span>
+                          <span>🗳️ Rodada {actualCurrentRound}</span>
+                        </div>
+                      </div>
+
+                      {!showSanctionInput ? (
+                        <Button
+                          onClick={toggleSanctionInput}
+                          variant="destructive"
+                          className="w-full h-10"
+                        >
+                          <AlertTriangle className="mr-2 h-4 w-4" />
+                          Aplicar Sanção à Rodada
+                        </Button>
+                      ) : (
+                        <div className="space-y-3">
+                          <Textarea
+                            placeholder="Descreva o motivo da sanção aplicada a todos os participantes desta rodada..."
+                            value={sanctionMessage}
+                            onChange={(e) =>
+                              updateSanctionMessage(e.target.value)
+                            }
+                            className="text-sm h-20 resize-none"
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              onClick={toggleSanctionInput}
+                              className="flex-1 h-10"
+                            >
+                              Cancelar
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={() =>
+                                handleApplySanction(sanctionMessage)
+                              }
+                              className="flex-1 h-10"
+                            >
+                              Confirmar Sanção
+                            </Button>
                           </div>
-                        ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1313,10 +1417,10 @@ const VotingArea = ({
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-sm font-semibold text-red-800">
-                        {sanction.candidate_name}
+                        Sanção Geral da Rodada
                       </span>
                       <Badge variant="destructive" className="text-xs">
-                        Sancionado
+                        Todos os Participantes
                       </Badge>
                     </div>
                     <p className="text-sm text-red-700 mb-1">
@@ -1348,7 +1452,85 @@ const VotingArea = ({
           winner={winner}
           participationStatus={{ total: activeParticipants, voted: votedCount }}
         />
-      ) : showParticipantsList && !actualRoundActive ? (
+      ) : actualRoundActive &&
+        !hasVoted &&
+        currentUserId &&
+        !isAdmin &&
+        !showParticipantsList ? (
+        <Card className="border border-orange-300 bg-white shadow-sm">
+          <CardHeader className="pb-3 text-center">
+            <CardTitle className="text-lg text-orange-800 flex items-center justify-center gap-2">
+              <Crown className="text-yellow-600 h-5 w-5" />
+              Vote para Papa do Arraiá
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <RadioGroup
+              value={selectedCandidate || ""}
+              onValueChange={setSelectedCandidate}
+              className="space-y-3"
+            >
+              {candidates
+                .filter((candidate) => !candidate.eliminated)
+                .map((candidate) => (
+                  <motion.div
+                    key={candidate.id}
+                    whileTap={{ scale: 0.98 }}
+                    className={`flex items-center space-x-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                      selectedCandidate === candidate.id
+                        ? "border-orange-500 bg-orange-50"
+                        : "border-gray-200 hover:border-orange-300 bg-white"
+                    }`}
+                  >
+                    <RadioGroupItem
+                      value={candidate.id}
+                      id={`candidate-${candidate.id}`}
+                      className="w-4 h-4"
+                    />
+                    <Label
+                      htmlFor={`candidate-${candidate.id}`}
+                      className="flex items-center gap-3 cursor-pointer w-full"
+                    >
+                      <div className="relative">
+                        <img
+                          src={candidate.image}
+                          alt={candidate.name}
+                          className="w-10 h-10 rounded-full border-2 border-orange-300"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-sm font-semibold text-gray-800 block">
+                          {candidate.name}
+                        </span>
+                        <span className="text-xs text-gray-600">
+                          Candidato • Rodada {actualCurrentRound}
+                        </span>
+                      </div>
+                    </Label>
+                  </motion.div>
+                ))}
+            </RadioGroup>
+          </CardContent>
+          <CardFooter className="flex flex-col gap-3 pt-4">
+            <Button
+              onClick={handleVote}
+              disabled={!selectedCandidate}
+              className="w-full bg-orange-600 hover:bg-orange-700 h-12"
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Confirmar Voto
+            </Button>
+            <Button
+              variant="outline"
+              onClick={toggleResults}
+              className="w-full h-10"
+            >
+              📊 Ver Resultados
+            </Button>
+          </CardFooter>
+        </Card>
+      ) : showParticipantsList ||
+        (!actualRoundActive && !hasVoted && !showResults) ? (
         <Card className="border border-orange-300 bg-white shadow-sm">
           <CardHeader className="pb-3 text-center">
             <CardTitle className="text-lg text-orange-800 flex items-center justify-center gap-2">
@@ -1420,79 +1602,6 @@ const VotingArea = ({
             >
               <Crown className="mr-2 h-4 w-4" />
               Aguardar Início da Votação
-            </Button>
-            <Button
-              variant="outline"
-              onClick={toggleResults}
-              className="w-full h-10"
-            >
-              📊 Ver Resultados
-            </Button>
-          </CardFooter>
-        </Card>
-      ) : actualRoundActive && !hasVoted ? (
-        <Card className="border border-orange-300 bg-white shadow-sm">
-          <CardHeader className="pb-3 text-center">
-            <CardTitle className="text-lg text-orange-800 flex items-center justify-center gap-2">
-              <Crown className="text-yellow-600 h-5 w-5" />
-              Vote para Papa do Arraiá
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <RadioGroup
-              value={selectedCandidate || ""}
-              onValueChange={setSelectedCandidate}
-              className="space-y-3"
-            >
-              {candidates
-                .filter((candidate) => !candidate.eliminated)
-                .map((candidate) => (
-                  <motion.div
-                    key={candidate.id}
-                    whileTap={{ scale: 0.98 }}
-                    className={`flex items-center space-x-3 p-3 rounded-lg border transition-all cursor-pointer ${
-                      selectedCandidate === candidate.id
-                        ? "border-orange-500 bg-orange-50"
-                        : "border-gray-200 hover:border-orange-300 bg-white"
-                    }`}
-                  >
-                    <RadioGroupItem
-                      value={candidate.id}
-                      id={`candidate-${candidate.id}`}
-                      className="w-4 h-4"
-                    />
-                    <Label
-                      htmlFor={`candidate-${candidate.id}`}
-                      className="flex items-center gap-3 cursor-pointer w-full"
-                    >
-                      <div className="relative">
-                        <img
-                          src={candidate.image}
-                          alt={candidate.name}
-                          className="w-10 h-10 rounded-full border-2 border-orange-300"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <span className="text-sm font-semibold text-gray-800 block">
-                          {candidate.name}
-                        </span>
-                        <span className="text-xs text-gray-600">
-                          Candidato • Rodada {actualCurrentRound}
-                        </span>
-                      </div>
-                    </Label>
-                  </motion.div>
-                ))}
-            </RadioGroup>
-          </CardContent>
-          <CardFooter className="flex flex-col gap-3 pt-4">
-            <Button
-              onClick={handleVote}
-              disabled={!selectedCandidate}
-              className="w-full bg-orange-600 hover:bg-orange-700 h-12"
-            >
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-              Confirmar Voto
             </Button>
             <Button
               variant="outline"
