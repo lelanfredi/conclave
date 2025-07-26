@@ -769,28 +769,44 @@ const VotingArea = ({
   };
 
   const handleRemoveParticipant = async (participantId: string) => {
+    console.log("Attempting to remove participant:", participantId);
+
     if (!confirm("Tem certeza que deseja remover este participante?")) {
+      console.log("User cancelled removal");
       return;
     }
 
     try {
       if (supabase) {
-        // Remove participant from database
-        const { error } = await supabase
-          .from("participants")
-          .delete()
-          .eq("id", participantId);
+        console.log("Using Supabase to remove participant");
 
-        if (error) throw error;
-
-        // Also remove any votes from this participant
-        await supabase
+        // First, remove any votes from this participant
+        const { error: votesError } = await supabase
           .from("votes")
           .delete()
           .eq("participant_id", participantId);
 
-        console.log("Participant removed successfully");
+        if (votesError) {
+          console.error("Error removing participant votes:", votesError);
+        } else {
+          console.log("Participant votes removed successfully");
+        }
+
+        // Then remove participant from database
+        const { error: participantError } = await supabase
+          .from("participants")
+          .delete()
+          .eq("id", participantId);
+
+        if (participantError) {
+          console.error("Error removing participant:", participantError);
+          throw participantError;
+        }
+
+        console.log("Participant removed successfully from Supabase");
       } else {
+        console.log("Using localStorage to remove participant");
+
         // Fallback to localStorage
         const storedParticipants = localStorage.getItem("participants");
         if (storedParticipants) {
@@ -802,6 +818,7 @@ const VotingArea = ({
             "participants",
             JSON.stringify(filteredParticipants),
           );
+          console.log("Participant removed from localStorage");
         }
 
         // Remove votes from this participant
@@ -812,14 +829,20 @@ const VotingArea = ({
             (v: any) => v.participant_id !== participantId,
           );
           localStorage.setItem("votes", JSON.stringify(filteredVotes));
+          console.log("Participant votes removed from localStorage");
         }
       }
 
       // Reload data to reflect changes
+      console.log("Reloading data after participant removal");
       await loadData();
+
+      alert("Participante removido com sucesso!");
     } catch (error) {
       console.error("Error removing participant:", error);
-      alert("Erro ao remover participante. Tente novamente.");
+      alert(
+        `Erro ao remover participante: ${error.message || error}. Verifique o console para mais detalhes.`,
+      );
     }
   };
 
