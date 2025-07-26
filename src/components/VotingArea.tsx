@@ -119,7 +119,8 @@ const VotingArea = ({
           { event: "*", schema: "public", table: "votes" },
           () => {
             console.log("Votes updated, reloading data...");
-            loadData();
+            // Debounce loadData to prevent excessive calls
+            setTimeout(() => loadData(), 500);
           },
         )
         .on(
@@ -127,30 +128,41 @@ const VotingArea = ({
           { event: "*", schema: "public", table: "voting_sessions" },
           (payload) => {
             console.log("Voting session updated:", payload);
-            // Force immediate state update for round activation
-            if (
-              payload.new &&
-              (payload.new as VotingSession).round_active !== (payload.old as VotingSession)?.round_active
-            ) {
-              console.log("Round status changed, forcing immediate update...");
-              console.log("New session state:", payload.new);
+            
+            // Only update if there's a meaningful change
+            if (payload.new && payload.old) {
+              const newSession = payload.new as VotingSession;
+              const oldSession = payload.old as VotingSession;
+              
+              // Check if round_active status changed
+              if (newSession.round_active !== oldSession.round_active) {
+                console.log("Round status changed, forcing immediate update...");
+                console.log("New session state:", newSession);
 
-              // Update session immediately
-              setVotingSession(payload.new as VotingSession);
+                // Update session immediately
+                setVotingSession(newSession);
 
-              // Reset voting state when round becomes active
-              if ((payload.new as VotingSession).round_active) {
-                console.log("Round activated - resetting participant state");
-                setHasVoted(false);
-                setSelectedCandidate(null);
-                setShowParticipantsList(false);
-                setShowResults(false);
-                setShowBellAnimation(true);
-                setTimeout(() => setShowBellAnimation(false), 3000);
+                // Reset voting state when round becomes active
+                if (newSession.round_active) {
+                  console.log("Round activated - resetting participant state");
+                  setHasVoted(false);
+                  setSelectedCandidate(null);
+                  setShowParticipantsList(false);
+                  setShowResults(false);
+                  setShowBellAnimation(true);
+                  setTimeout(() => setShowBellAnimation(false), 3000);
+                }
+              } else {
+                // Only update session if other fields changed
+                setVotingSession(newSession);
               }
+            } else if (payload.new) {
+              // New session created
+              setVotingSession(payload.new as VotingSession);
             }
-            // Always reload data after session changes
-            setTimeout(() => loadData(), 100);
+            
+            // Debounce loadData to prevent excessive calls
+            setTimeout(() => loadData(), 500);
           },
         )
         .on(
@@ -158,7 +170,8 @@ const VotingArea = ({
           { event: "*", schema: "public", table: "participants" },
           () => {
             console.log("Participants updated, reloading data...");
-            loadData();
+            // Debounce loadData to prevent excessive calls
+            setTimeout(() => loadData(), 500);
           },
         )
         .subscribe();
@@ -167,31 +180,36 @@ const VotingArea = ({
         supabase.removeChannel(votingChannel);
       };
     } else {
-      // Fallback polling for localStorage mode
+      // Fallback polling for localStorage mode - reduced frequency
       const interval = setInterval(() => {
         const storedSession = localStorage.getItem("votingSession");
         if (storedSession) {
-          const sessionData = JSON.parse(storedSession);
-          if (sessionData.round_active !== votingSession?.round_active) {
-            console.log("LocalStorage: Round status changed, updating...");
-            setVotingSession(sessionData);
-            if (sessionData.round_active) {
-              console.log("LocalStorage: Round activated - resetting state");
-              setHasVoted(false);
-              setSelectedCandidate(null);
-              setShowParticipantsList(false);
-              setShowResults(false);
-              setShowBellAnimation(true);
-              setTimeout(() => setShowBellAnimation(false), 3000);
+          try {
+            const sessionData = JSON.parse(storedSession);
+            if (sessionData.round_active !== votingSession?.round_active) {
+              console.log("LocalStorage: Round status changed, updating...");
+              setVotingSession(sessionData);
+              if (sessionData.round_active) {
+                console.log("LocalStorage: Round activated - resetting state");
+                setHasVoted(false);
+                setSelectedCandidate(null);
+                setShowParticipantsList(false);
+                setShowResults(false);
+                setShowBellAnimation(true);
+                setTimeout(() => setShowBellAnimation(false), 3000);
+              }
             }
+          } catch (error) {
+            console.error("Error parsing localStorage session:", error);
           }
         }
+        // Only reload data every 3 seconds to prevent excessive calls
         loadData();
-      }, 1000);
+      }, 3000); // Increased from 1000ms to 3000ms
 
       return () => clearInterval(interval);
     }
-  }, []);
+  }, [votingSession?.round_active]); // Add dependency to prevent unnecessary re-runs
 
   // Auto-refresh for TV mode
   useEffect(() => {
@@ -199,7 +217,7 @@ const VotingArea = ({
       const interval = setInterval(() => {
         console.log("TV mode auto-refresh...");
         loadData();
-      }, 3000);
+      }, 5000); // Increased to 5 seconds to reduce load
       return () => clearInterval(interval);
     }
   }, [isTvMode]);
@@ -218,12 +236,18 @@ const VotingArea = ({
       roundActive &&
       votedCount === activeParticipants &&
       activeParticipants > 0 &&
-      isAdmin
+      isAdmin &&
+      !votingSession?.session_ended // Prevent auto-end if session already ended
     ) {
       console.log("All participants voted, auto-ending round...");
-      handleEndRound();
+      // Add delay to prevent immediate auto-end
+      setTimeout(() => {
+        if (roundActive && !votingSession?.session_ended) {
+          handleEndRound();
+        }
+      }, 2000);
     }
-  }, [candidates, participants, roundActive, isAdmin]);
+  }, [candidates, participants, roundActive, isAdmin, votingSession?.session_ended]);
 
   // Calculate vote statistics for rendering
   const totalVotes = candidates.reduce(
@@ -241,11 +265,11 @@ const VotingArea = ({
 
   // Bell sound effect simulation
   useEffect(() => {
-    if (roundActive && !showBellAnimation) {
+    if (roundActive && !showBellAnimation && votingSession?.round_active) {
       setShowBellAnimation(true);
       setTimeout(() => setShowBellAnimation(false), 3000);
     }
-  }, [roundActive]);
+  }, [roundActive, votingSession?.round_active, showBellAnimation]);
 
   // Load data from Supabase or fallback to localStorage
   const loadData = async () => {
@@ -260,9 +284,12 @@ const VotingArea = ({
           .single();
 
         if (sessionData) {
+          console.log("✅ Existing voting session loaded:", sessionData);
           setVotingSession(sessionData);
         } else if (sessionError?.code === "PGRST116") {
           // No session exists, create initial session
+          console.log("🔄 No voting session found, creating new one...");
+          
           const { data: newSession, error: createError } = await supabase
             .from("voting_sessions")
             .insert({
@@ -274,12 +301,17 @@ const VotingArea = ({
             .single();
 
           if (createError) {
-            console.error("Error creating voting session:", createError);
+            console.error("❌ Error creating voting session:", createError);
+            // Fallback to localStorage mode
+            console.log("🔄 Falling back to localStorage mode...");
           } else {
+            console.log("✅ New voting session created:", newSession);
             setVotingSession(newSession);
           }
         } else {
-          console.error("Error loading voting session:", sessionError);
+          console.error("❌ Error loading voting session:", sessionError);
+          // Fallback to localStorage mode
+          console.log("🔄 Falling back to localStorage mode...");
         }
 
         // Load sanctions for current round (with simplified error handling)
@@ -526,7 +558,7 @@ const VotingArea = ({
   }, [candidates]);
 
   // Update current round and round active status from voting session
-  const actualCurrentRound = votingSession?.current_round || currentRound;
+  const actualCurrentRound = votingSession?.current_round || 1;
   const actualRoundActive = votingSession?.round_active || roundActive;
 
   const handleVote = async () => {
@@ -542,37 +574,100 @@ const VotingArea = ({
 
   const handleStartNewRound = async () => {
     try {
-      console.log("Starting new round...", votingSession?.current_round);
+      console.log("🚀 Starting new round...", votingSession?.current_round);
 
-      if (supabase && votingSession) {
-        // Update voting session to start the round
-        const { data, error } = await supabase
-          .from("voting_sessions")
-          .update({
-            round_active: true,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", votingSession.id)
-          .select()
-          .single();
+      if (supabase) {
+        // Verificar se temos uma sessão válida
+        if (!votingSession || !votingSession.id) {
+          console.log("⚠️ No valid voting session found, creating new one...");
+          
+          // Criar nova sessão se não existir
+          const { data: newSession, error: createError } = await supabase
+            .from("voting_sessions")
+            .insert({
+              current_round: 1, // Sempre começa na rodada 1
+              round_active: true,
+              max_rounds: 4,
+            })
+            .select()
+            .single();
 
-        if (error) throw error;
+          if (createError) {
+            console.error("❌ Error creating new voting session:", createError);
+            throw new Error(`Failed to create voting session: ${createError.message}`);
+          }
 
-        // Clear any existing votes for this round
-        await supabase
-          .from("votes")
-          .delete()
-          .eq("round", votingSession.current_round);
+          console.log("✅ New voting session created:", newSession);
+          setVotingSession(newSession);
+          
+          // Continuar com a nova sessão
+          const sessionToUse = newSession;
+          
+          // Clear any existing votes for this round
+          await supabase
+            .from("votes")
+            .delete()
+            .eq("round", sessionToUse.current_round);
 
-        console.log(
-          `Round ${votingSession.current_round} started successfully`,
-          data,
-        );
+          console.log(`✅ Round ${sessionToUse.current_round} started successfully`);
+          
+        } else {
+          console.log("🔄 Updating existing voting session...");
+          
+          // Update existing voting session to start the round
+          const { data, error } = await supabase
+            .from("voting_sessions")
+            .update({
+              round_active: true,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", votingSession.id)
+            .select()
+            .single();
 
-        // Immediately update local state
-        setVotingSession(data);
+          if (error) {
+            console.error("❌ Error updating voting session:", error);
+            
+            // Se a sessão não foi encontrada, criar uma nova
+            if (error.code === "PGRST116") {
+              console.log("🔄 Session not found, creating new one...");
+              
+              const { data: newSession, error: createError } = await supabase
+                .from("voting_sessions")
+                .insert({
+                  current_round: 1, // Reset para rodada 1 se sessão foi perdida
+                  round_active: true,
+                  max_rounds: 4,
+                })
+                .select()
+                .single();
+
+              if (createError) {
+                throw new Error(`Failed to create new session: ${createError.message}`);
+              }
+
+              console.log("✅ New session created:", newSession);
+              setVotingSession(newSession);
+            } else {
+              throw error;
+            }
+          } else {
+            console.log("✅ Session updated successfully:", data);
+            setVotingSession(data);
+          }
+
+          // Clear any existing votes for this round
+          await supabase
+            .from("votes")
+            .delete()
+            .eq("round", votingSession.current_round);
+
+          console.log(`✅ Round ${votingSession.current_round} started successfully`);
+        }
       } else {
         // Fallback to localStorage
+        console.log("💾 Using localStorage fallback...");
+        
         if (votingSession) {
           const updatedSession = {
             ...votingSession,
@@ -590,6 +685,18 @@ const VotingArea = ({
             (vote: any) => vote.round !== votingSession.current_round,
           );
           localStorage.setItem("votes", JSON.stringify(filteredVotes));
+        } else {
+          // Criar sessão no localStorage se não existir
+          const newSession = {
+            id: Date.now().toString(),
+            current_round: votingSession?.current_round || 1, // Manter rodada atual ou começar na 1
+            round_active: true,
+            max_rounds: 4,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setVotingSession(newSession);
+          localStorage.setItem("votingSession", JSON.stringify(newSession));
         }
       }
 
@@ -613,7 +720,22 @@ const VotingArea = ({
 
       console.log("✅ Round started successfully, UI state updated");
     } catch (error) {
-      console.error("Error starting round:", error);
+      console.error("❌ Error starting round:", error);
+      
+      // Mostrar erro mais amigável para o usuário
+      let errorMessage = "Erro ao iniciar rodada";
+      
+      if (error.message) {
+        if (error.message.includes("PGRST116")) {
+          errorMessage = "Erro: Sessão de votação não encontrada. Tente novamente.";
+        } else if (error.message.includes("Failed to create")) {
+          errorMessage = "Erro: Não foi possível criar sessão de votação.";
+        } else {
+          errorMessage = `Erro: ${error.message}`;
+        }
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -839,7 +961,8 @@ const VotingArea = ({
   };
 
   const handleRemoveParticipant = async (participantId: string) => {
-    if (!confirm("Tem certeza que deseja remover este participante?")) {
+    // Verificar se confirm está disponível (para SSR)
+    if (typeof window !== 'undefined' && !confirm("Tem certeza que deseja remover este participante?")) {
       return;
     }
 
@@ -851,54 +974,108 @@ const VotingArea = ({
       return;
     }
 
+    console.log(`🗑️ Removendo participante: ${participantToRemove.cardinal_name} (ID: ${participantId})`);
+
     try {
       if (supabase) {
-        // Remove votes first
-        await supabase
+        console.log("🔗 Modo Supabase: Removendo participante...");
+        
+        // Remove votes first (para evitar foreign key constraint)
+        const { error: votesError } = await supabase
           .from("votes")
           .delete()
           .eq("participant_id", participantId);
 
+        if (votesError) {
+          console.warn("Aviso ao remover votos:", votesError.message);
+          // Continua mesmo se houver erro nos votos
+        } else {
+          console.log("✅ Votos removidos com sucesso");
+        }
+
         // Remove participant
-        const { error } = await supabase
+        const { error: participantError } = await supabase
           .from("participants")
           .delete()
           .eq("id", participantId);
 
-        if (error) {
-          throw new Error(`Erro do Supabase: ${error.message}`);
+        if (participantError) {
+          console.error("Erro ao remover participante:", participantError);
+          throw new Error(`Erro do Supabase: ${participantError.message}`);
         }
+
+        console.log("✅ Participante removido do Supabase");
       } else {
+        console.log("💾 Modo localStorage: Removendo participante...");
+        
         // Remove from localStorage
         const storedParticipants = localStorage.getItem("participants");
         if (storedParticipants) {
-          const participants = JSON.parse(storedParticipants);
-          const filteredParticipants = participants.filter(
-            (p: any) => p.id !== participantId,
-          );
-          localStorage.setItem(
-            "participants",
-            JSON.stringify(filteredParticipants),
-          );
+          try {
+            const participants = JSON.parse(storedParticipants);
+            const filteredParticipants = participants.filter(
+              (p: any) => p.id !== participantId,
+            );
+            localStorage.setItem(
+              "participants",
+              JSON.stringify(filteredParticipants),
+            );
+            console.log("✅ Participante removido do localStorage");
+          } catch (parseError) {
+            console.error("Erro ao processar participantes:", parseError);
+            throw new Error("Erro ao processar dados dos participantes");
+          }
         }
 
         // Remove votes from localStorage
         const storedVotes = localStorage.getItem("votes");
         if (storedVotes) {
-          const votes = JSON.parse(storedVotes);
-          const filteredVotes = votes.filter(
-            (v: any) => v.participant_id !== participantId,
-          );
-          localStorage.setItem("votes", JSON.stringify(filteredVotes));
+          try {
+            const votes = JSON.parse(storedVotes);
+            const filteredVotes = votes.filter(
+              (v: any) => v.participant_id !== participantId,
+            );
+            localStorage.setItem("votes", JSON.stringify(filteredVotes));
+            console.log("✅ Votos removidos do localStorage");
+          } catch (parseError) {
+            console.error("Erro ao processar votos:", parseError);
+            // Continua mesmo se houver erro nos votos
+          }
         }
       }
 
       // Reload data to reflect changes
+      console.log("🔄 Recarregando dados...");
       await loadData();
+      
+      // Verificar se a remoção foi bem-sucedida
+      const updatedParticipants = participants.filter(p => p.id !== participantId);
+      if (updatedParticipants.length === participants.length) {
+        console.warn("⚠️ Participante ainda aparece na lista após remoção");
+      } else {
+        console.log("✅ Remoção confirmada - participante não está mais na lista");
+      }
+
       alert("Participante removido com sucesso!");
     } catch (error) {
-      console.error("Error removing participant:", error);
-      alert(`Erro ao remover participante: ${error.message || error}`);
+      console.error("❌ Erro ao remover participante:", error);
+      
+      // Mensagem de erro mais amigável
+      let errorMessage = "Erro desconhecido ao remover participante";
+      
+      if (error.message) {
+        if (error.message.includes("Foreign key constraint")) {
+          errorMessage = "Erro: Participante tem votos associados. Tente novamente.";
+        } else if (error.message.includes("RLS")) {
+          errorMessage = "Erro de permissão. Verifique as configurações do banco.";
+        } else if (error.message.includes("Supabase")) {
+          errorMessage = `Erro de conexão: ${error.message}`;
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      alert(`Erro ao remover participante: ${errorMessage}`);
     }
   };
 
