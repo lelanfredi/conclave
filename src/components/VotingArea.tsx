@@ -42,15 +42,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-interface Candidate {
-  id: string;
-  name: string;
-  votes: number;
-  eliminated: boolean;
-  hasVoted?: boolean;
-  image?: string;
-}
+import type { Candidate } from "@/types/supabase";
 
 interface VotingAreaProps {
   realName?: string;
@@ -138,16 +130,16 @@ const VotingArea = ({
             // Force immediate state update for round activation
             if (
               payload.new &&
-              payload.new.round_active !== payload.old?.round_active
+              (payload.new as VotingSession).round_active !== (payload.old as VotingSession)?.round_active
             ) {
               console.log("Round status changed, forcing immediate update...");
               console.log("New session state:", payload.new);
 
               // Update session immediately
-              setVotingSession(payload.new);
+              setVotingSession(payload.new as VotingSession);
 
               // Reset voting state when round becomes active
-              if (payload.new.round_active) {
+              if ((payload.new as VotingSession).round_active) {
                 console.log("Round activated - resetting participant state");
                 setHasVoted(false);
                 setSelectedCandidate(null);
@@ -326,6 +318,7 @@ const VotingArea = ({
             id: p.id,
             name: p.cardinal_name,
             votes: 0,
+            percentage: 0,
             eliminated: false,
             hasVoted: false,
             image: `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.cardinal_name.replace(/\s+/g, "")}`,
@@ -352,6 +345,7 @@ const VotingArea = ({
                 prev.map((c) => ({
                   ...c,
                   votes: voteCounts[c.id] || 0,
+                  percentage: totalVotes > 0 ? Math.round(((voteCounts[c.id] || 0) / totalVotes) * 100) : 0,
                 })),
               );
             }
@@ -371,6 +365,7 @@ const VotingArea = ({
             id: p.id,
             name: p.cardinal_name,
             votes: 0,
+            percentage: 0,
             eliminated: false,
             hasVoted: false,
             image: `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.cardinal_name.replace(/\s+/g, "")}`,
@@ -407,6 +402,7 @@ const VotingArea = ({
             prev.map((c) => ({
               ...c,
               votes: voteCounts[c.id] || 0,
+              percentage: totalVotes > 0 ? Math.round(((voteCounts[c.id] || 0) / totalVotes) * 100) : 0,
             })),
           );
         }
@@ -915,11 +911,7 @@ const VotingArea = ({
     return (
       <div className="min-h-screen bg-gradient-to-b from-orange-600 to-red-700 p-8">
         <ResultsDashboard
-          candidates={candidates.map((c) => ({
-            ...c,
-            percentage:
-              totalVotes > 0 ? Math.round((c.votes / totalVotes) * 100) : 0,
-          }))}
+          candidates={candidates}
           currentRound={currentRound}
           totalRounds={4}
           totalVotes={totalVotes}
@@ -1440,11 +1432,7 @@ const VotingArea = ({
 
       {showResults ? (
         <ResultsDashboard
-          candidates={candidates.map((c) => ({
-            ...c,
-            percentage:
-              totalVotes > 0 ? Math.round((c.votes / totalVotes) * 100) : 0,
-          }))}
+          candidates={candidates}
           currentRound={currentRound}
           totalRounds={4}
           totalVotes={totalVotes}

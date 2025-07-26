@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Participant, Vote, VotingSession, Sanction } from "@/types/supabase";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -40,35 +41,5 @@ if (supabase) {
     });
 }
 
-// Database types
-export interface Participant {
-  id: string;
-  real_name: string;
-  cardinal_name: string;
-  created_at: string;
-}
-
-export interface Vote {
-  id: string;
-  participant_id: string;
-  candidate_id: string;
-  round: number;
-  created_at: string;
-}
-
-export interface VotingSession {
-  id: string;
-  current_round: number;
-  round_active: boolean;
-  max_rounds: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Sanction {
-  id: string;
-  message: string;
-  round: number;
-  applied_by: string;
-  created_at: string;
-}
+// Re-export types for convenience
+export type { Participant, Vote, VotingSession, Sanction };
